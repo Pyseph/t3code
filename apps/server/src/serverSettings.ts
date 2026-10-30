@@ -858,7 +858,16 @@ const make = Effect.gen(function* () {
       const lastGood = yield* Ref.get(lastGoodSettingsRef);
       if (Option.isSome(lastGood)) {
         return {
-          settings: { ...lastGood.value, continueThreadsAfterServerUpdate: false },
+          settings: {
+            ...lastGood.value,
+            continueThreadsAfterServerUpdate: false,
+            projectSettingsOverrides: Object.fromEntries(
+              Object.entries(lastGood.value.projectSettingsOverrides).map(([id, overrides]) => [
+                id,
+                { ...overrides, continueThreadsAfterServerUpdate: false },
+              ]),
+            ),
+          },
           parseFailure,
           fromPublishedSave,
         };

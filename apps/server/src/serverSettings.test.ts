@@ -8,11 +8,13 @@ import {
   ProviderInstanceId,
   resolveProviderInstanceEnabled,
   SecretProviderId,
+  SecretProviderKind,
   ServerSettings,
   ServerSettingsPatch,
   UsageLimitSourceId,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -448,7 +450,13 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           const service = yield* ServerSettingsModule.ServerSettingsService;
           yield* fs.writeFileString(
             config.settingsPath,
-            JSON.stringify({ responseStreamingMode: "turn", defaultProjectScripts: [usageScript] }),
+            JSON.stringify({
+              responseStreamingMode: "turn",
+              defaultProjectScripts: [usageScript],
+              projectSettingsOverrides: {
+                project: { continueThreadsAfterServerUpdate: true, defaultAutoPull: false },
+              },
+            }),
           );
           yield* service.start;
           yield* awaitWatcher(config.settingsPath, reads);
@@ -477,6 +485,13 @@ it.layer(NodeServices.layer)("server settings", (it) => {
             );
             // The unreadable file may hold an opt-out, so threads are not resumed meanwhile.
             assert.isFalse(kept.continueThreadsAfterServerUpdate);
+            assert.isFalse(
+              resolveProjectSettings(kept, ProjectId.make("project")).settings
+                .continueThreadsAfterServerUpdate,
+            );
+            assert.isFalse(
+              kept.projectSettingsOverrides[ProjectId.make("project")]?.defaultAutoPull,
+            );
           }
           assert.lengthOf(
             messages.filter((message) => message.includes("failed to parse settings.json")),
@@ -486,6 +501,10 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           yield* fs.writeFileString(config.settingsPath, savedContents);
           const restored = yield* changes.pipe(Stream.runHead, Effect.timeout("2 seconds"));
           assert.isTrue(Option.getOrUndefined(restored)?.continueThreadsAfterServerUpdate);
+          assert.isTrue(
+            resolveProjectSettings(Option.getOrThrow(restored), ProjectId.make("project")).settings
+              .continueThreadsAfterServerUpdate,
+          );
 
           yield* fs.writeFileString(
             config.settingsPath,
@@ -692,7 +711,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
                 .updateSettings({
                   secretProviders: {
                     [SecretProviderId.make("invalid")]: {
-                      kind: "one_password",
+                      kind: SecretProviderKind.make("one_password"),
                       label: "Invalid",
                       config: { account: "--help" },
                     },
