@@ -742,6 +742,8 @@ const make = Effect.gen(function* () {
       } else {
         settings = decoded.value;
       }
+    } else {
+      yield* Ref.set(publishedSaveRef, Option.none());
     }
     if (Option.isNone(parseFailure)) {
       yield* Ref.set(parseFailureLoggedRef, false);

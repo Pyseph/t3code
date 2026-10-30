@@ -661,8 +661,9 @@ it.layer(NodeServices.layer)("server settings", (it) => {
   );
 
   it.effect("publishes a provider key that another program rotates in settings.json", () =>
-    Effect.forEach([false, true], (reloadBeforeWatcher) =>
+    Effect.forEach(["watcher", "mutation", "missing"] as const, (scenario) =>
       Effect.gen(function* () {
+        const reloadBeforeWatcher = scenario !== "watcher";
         const reads = yield* Queue.unbounded<void>();
         yield* Effect.scoped(
           Effect.gen(function* () {
@@ -683,9 +684,27 @@ it.layer(NodeServices.layer)("server settings", (it) => {
               yield* service.withSettingsSnapshot(() => Effect.void);
             }
             const changes = yield* service.subscribeChanges;
+            const savedContents = yield* fs.readFileString(config.settingsPath);
 
-            yield* fs.writeFileString(config.settingsPath, withApiKey("second-key"));
-            if (reloadBeforeWatcher) {
+            if (scenario === "missing") {
+              yield* fs.remove(config.settingsPath);
+              const failure = yield* service
+                .updateSettings({
+                  secretProviders: {
+                    [SecretProviderId.make("invalid")]: {
+                      kind: "one_password",
+                      label: "Invalid",
+                      config: { account: "--help" },
+                    },
+                  },
+                })
+                .pipe(Effect.flip);
+              assert.equal(failure.operation, "write-secret-provider");
+              yield* fs.writeFileString(config.settingsPath, savedContents);
+            } else {
+              yield* fs.writeFileString(config.settingsPath, withApiKey("second-key"));
+            }
+            if (scenario === "mutation") {
               const failure = yield* service
                 .updateProviderInstance({
                   operation: "create",
@@ -694,6 +713,8 @@ it.layer(NodeServices.layer)("server settings", (it) => {
                 })
                 .pipe(Effect.flip);
               assert.equal(failure._tag, "ServerSettingsError");
+            }
+            if (reloadBeforeWatcher) {
               yield* service.start;
               yield* awaitWatcher(config.settingsPath, reads);
             }
@@ -702,7 +723,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
             assert.propertyVal(
               Option.getOrUndefined(change)?.providerInstances[instanceId]?.config,
               "apiKey",
-              "second-key",
+              scenario === "missing" ? "first-key" : "second-key",
             );
             assert.notInclude(yield* fs.readFileString(config.settingsPath), "second-key");
           }),
