@@ -454,6 +454,12 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           yield* awaitWatcher(config.settingsPath, reads);
           const changes = yield* service.subscribeChanges;
           assert.isTrue((yield* service.getSettings).continueThreadsAfterServerUpdate);
+          yield* service.updateSettings({ responseStreamingMode: "turn" });
+          const savedContents = yield* fs.readFileString(config.settingsPath);
+          yield* Queue.take(reads);
+          yield* Queue.take(reads);
+          yield* service.withSettingsSnapshot(() => Effect.void);
+          yield* changes.pipe(Stream.runHead);
 
           // A write caught halfway, then one the schema rejects.
           for (const contents of [
@@ -476,6 +482,10 @@ it.layer(NodeServices.layer)("server settings", (it) => {
             messages.filter((message) => message.includes("failed to parse settings.json")),
             1,
           );
+
+          yield* fs.writeFileString(config.settingsPath, savedContents);
+          const restored = yield* changes.pipe(Stream.runHead, Effect.timeout("2 seconds"));
+          assert.isTrue(Option.getOrUndefined(restored)?.continueThreadsAfterServerUpdate);
 
           yield* fs.writeFileString(
             config.settingsPath,
@@ -651,37 +661,54 @@ it.layer(NodeServices.layer)("server settings", (it) => {
   );
 
   it.effect("publishes a provider key that another program rotates in settings.json", () =>
-    Effect.gen(function* () {
-      const reads = yield* Queue.unbounded<void>();
-      yield* Effect.scoped(
-        Effect.gen(function* () {
-          const config = yield* ServerConfig.ServerConfig;
-          const fs = yield* FileSystem.FileSystem;
-          const service = yield* ServerSettingsModule.ServerSettingsService;
-          const instanceId = ProviderInstanceId.make("antigravity");
-          const withApiKey = (apiKey: string) =>
-            JSON.stringify({
-              providerInstances: { antigravity: { driver: "antigravity", config: { apiKey } } },
-            });
-          yield* fs.writeFileString(config.settingsPath, withApiKey("first-key"));
-          // Startup moves the key into the secret store and rewrites the file.
-          yield* service.start;
-          yield* awaitWatcher(config.settingsPath, reads);
-          yield* service.withSettingsSnapshot(() => Effect.void);
-          const changes = yield* service.subscribeChanges;
+    Effect.forEach([false, true], (reloadBeforeWatcher) =>
+      Effect.gen(function* () {
+        const reads = yield* Queue.unbounded<void>();
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const config = yield* ServerConfig.ServerConfig;
+            const fs = yield* FileSystem.FileSystem;
+            const service = yield* ServerSettingsModule.ServerSettingsService;
+            const instanceId = ProviderInstanceId.make("antigravity");
+            const withApiKey = (apiKey: string) =>
+              JSON.stringify({
+                providerInstances: { antigravity: { driver: "antigravity", config: { apiKey } } },
+              });
+            yield* fs.writeFileString(config.settingsPath, withApiKey("first-key"));
+            if (reloadBeforeWatcher) {
+              yield* service.updateSettings({});
+            } else {
+              yield* service.start;
+              yield* awaitWatcher(config.settingsPath, reads);
+              yield* service.withSettingsSnapshot(() => Effect.void);
+            }
+            const changes = yield* service.subscribeChanges;
 
-          yield* fs.writeFileString(config.settingsPath, withApiKey("second-key"));
+            yield* fs.writeFileString(config.settingsPath, withApiKey("second-key"));
+            if (reloadBeforeWatcher) {
+              const failure = yield* service
+                .updateProviderInstance({
+                  operation: "create",
+                  instanceId,
+                  instance: { driver: ProviderDriverKind.make("antigravity") },
+                })
+                .pipe(Effect.flip);
+              assert.equal(failure._tag, "ServerSettingsError");
+              yield* service.start;
+              yield* awaitWatcher(config.settingsPath, reads);
+            }
 
-          const change = yield* changes.pipe(Stream.runHead, Effect.timeout("2 seconds"));
-          assert.propertyVal(
-            Option.getOrUndefined(change)?.providerInstances[instanceId]?.config,
-            "apiKey",
-            "second-key",
-          );
-          assert.notInclude(yield* fs.readFileString(config.settingsPath), "second-key");
-        }),
-      ).pipe(Effect.provide(layerServerSettingsReportingReads(reads)));
-    }).pipe(TestClock.withLive),
+            const change = yield* changes.pipe(Stream.runHead, Effect.timeout("2 seconds"));
+            assert.propertyVal(
+              Option.getOrUndefined(change)?.providerInstances[instanceId]?.config,
+              "apiKey",
+              "second-key",
+            );
+            assert.notInclude(yield* fs.readFileString(config.settingsPath), "second-key");
+          }),
+        ).pipe(Effect.provide(layerServerSettingsReportingReads(reads)));
+      }).pipe(TestClock.withLive),
+    ),
   );
 
   it.effect("retries a failed settings read instead of keeping the failure", () =>

@@ -712,6 +712,7 @@ const make = Effect.gen(function* () {
     if (yield* readConfigExists) {
       const raw = yield* readRawConfig;
       fromPublishedSave = Option.contains(yield* Ref.get(publishedSaveRef), raw);
+      if (!fromPublishedSave) yield* Ref.set(publishedSaveRef, Option.none());
       const decoded = decodeServerSettingsJsonExit(raw);
       const legacySettings = decodeLegacyProviderSettingsJsonExit(raw);
       if (legacySettings._tag === "Success") {
