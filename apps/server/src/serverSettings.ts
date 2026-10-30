@@ -733,8 +733,7 @@ const make = Effect.gen(function* () {
               "failed to parse settings.json, ignoring it until it is fixed",
               {
                 path: settingsPath,
-                issues: Cause.pretty(failure.cause),
-                cause: failure.cause,
+                length: raw.length,
               },
             );
           }
