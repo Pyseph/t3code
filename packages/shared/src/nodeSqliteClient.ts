@@ -1093,7 +1093,7 @@ const make = Effect.fn("makeWithDatabase")(function* (
           ),
         )
       : [];
-  // One permit per slot, so a queued read takes whichever reader frees first.
+  // One permit per slot, so a queued read waits for any reader, not one it picked while all were busy.
   const readerAdmission = yield* Semaphore.make(readers.length);
 
   const writer = { name: "writer" as const, lock: semaphore, connection };
