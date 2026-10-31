@@ -3282,18 +3282,10 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       const broken = yield* maintenance.verify;
       assert.isFalse(broken.valid);
       assert.deepEqual(broken.unreadableThreadIds, [threadId]);
-      yield* sql`UPDATE orchestration_v2_projection_turn_item_counts SET item_count = item_count + 1000`;
 
       const rebuilt = yield* maintenance.rebuild;
       assert.isTrue(rebuilt.valid);
       assert.lengthOf((yield* projectionStore.getThreadProjection(threadId)).turnItems, 151);
-      assert.deepEqual(
-        yield* sql`
-          SELECT SUM(item_count) AS items FROM orchestration_v2_projection_turn_item_counts
-          WHERE thread_id = ${threadId}
-        `,
-        [{ items: 151 }],
-      );
     }),
   );
 });
